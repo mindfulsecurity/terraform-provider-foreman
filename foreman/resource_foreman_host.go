@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -704,6 +705,44 @@ func resourceForemanInterfacesAttributes() *schema.Resource {
 				},
 				Optional:    true,
 				Description: "Hypervisor specific interface options",
+				DiffSuppressFunc: func(key, oldValue, newValue string, d *schema.ResourceData) bool {
+					// Handle specific diff case when "Type" is just not set in the .tf file
+					// This is a complicated test implementation that works, and can be used as draft if needed.
+
+					// The whole string is in format "interfaces_attributes.0.compute_attributes.type", but because
+					// "interfaces_attributes" is a list, we check for regex to catch all array indices
+					re := regexp.MustCompile(`interfaces_attributes\.[0-9]+\.compute_attributes\.type`)
+					if re.MatchString(key) {
+						index, err := strconv.Atoi(strings.Split(key, ".")[1])
+						if err != nil {
+							log.Errorf("Error in compute_attributes DiffSuppressFunc: %v", err)
+							return false
+						}
+
+						// log.Debugf("compute_attributes DiffSuppressFunc: [%+v] [%+v] [%+v] [%+v] [%T]",
+						// 	key, oldValue, newValue, d.Get("interfaces_attributes"), d.Get("interfaces_attributes"))
+
+						ia := d.Get("interfaces_attributes").([]interface{})[index]
+
+						typeInSchema := true // Default is true to make sure
+						log.Debugf("ia: %+v", ia)
+						if val, ok := ia.(map[string]interface{}); ok {
+							if val2, ok2 := val["compute_attributes"].(map[string]interface{}); ok2 {
+								if _, ok3 := val2["type"]; !ok3 {
+									typeInSchema = false // Here we definitly know it is not passed as input
+									log.Debugf("type is not in interfaces_attributes.%d.compute_attributes", index)
+								}
+							}
+						}
+
+						if newValue == "" && !typeInSchema {
+							// Suppress diff if the field is just not set
+							return true
+						}
+					}
+
+					return false
+				},
 			},
 		},
 	}
